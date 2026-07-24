@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Matter {
+  id                    String    @id @default(cuid())
+  name                  String
+  description           String?
+  substantiveLaw        String
+  category              String
+  jurisdiction          String?
+  status                String
+  openedAt              DateTime
+  closedAt              DateTime?
+  estimatedValue        Decimal?
+
+  exposureAmount        Decimal?
+  liabilityEstimate     String?
+  jurisdictionTier      String?
+  estimatedResolution   DateTime?
+  insurerInvolved       Boolean   @default(false)
+  budgetApprovalRoute   String?
+
+  invoices              Invoice[]
+  assignments           FirmAssignment[]
+  forecast              Forecast?
+
+  @@index([substantiveLaw])
+  @@index([category])
+  @@index([status])
+  @@index([category, liabilityEstimate])
+  @@index([category, jurisdictionTier])
+  @@index([substantiveLaw, category, liabilityEstimate, jurisdictionTier])
+}
+
+model Firm {
+  id           String           @id @default(cuid())
+  name         String           @unique
+  assignments  FirmAssignment[]
+  invoices     Invoice[]
+}
+
+model FirmAssignment {
+  id          String   @id @default(cuid())
+  matterId    String
+  firmId      String
+  role        String
+  assignedAt  DateTime
+
+  matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  firm        Firm     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@index([matterId])
+  @@index([firmId])
+}
+
+model Invoice {
+  id           String   @id @default(cuid())
+  matterId     String
+  firmId       String
+  phaseCode    String
+  phaseName    String
+  taskCode     String
+  taskName     String
+  amount       Decimal
+  hours        Decimal
+  invoiceDate  DateTime
+
+  matter       Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  firm         Firm     @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@index([matterId])
+  @@index([firmId])
+  @@index([phaseCode])
+}
+
+model Forecast {
+  id          String   @id @default(cuid())
+  matterId    String   @unique
+  phases      Json
+  confidence  String
+  createdAt   DateTime @default(now())
+
+  matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "Bash(dir *)",
+      "Bash(npx tsc *)",
+      "Bash(npx next *)",
+      "Bash(npm run *)",
+      "Bash(taskkill //PID 37356 //F)",
+      "Bash(npx prisma *)",
+      "Bash(python3 -c ' *)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"yes\" npx prisma migrate reset --force)",
+      "Bash(npx tsx *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s -X POST http://localhost:3000/api/suggest-intake -H 'Content-Type: application/json' -d '{\"substantiveLaw\":\"Litigation\",\"category\":\"Commercial Litigation\",\"exposureAmount\":2000000,\"liabilityEstimate\":\"Reasonably Possible\",\"jurisdiction\":\"US - Federal - S.D.N.Y.\"}')",
+      "Bash(taskkill //PID 1729 //F)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(npx shadcn@latest add radio-group tooltip badge --yes)",
+      "Bash(npx shadcn@latest init --defaults)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
