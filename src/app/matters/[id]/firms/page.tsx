@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { PrismaClient } from '@prisma/client';
-import ForecastClient from './ForecastClient';
+import FirmSelectionClient from './FirmSelectionClient';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
@@ -39,7 +39,7 @@ export default async function Page({
           <span>/</span>
           <span className="max-w-[200px] truncate text-slate-500">{matter.name}</span>
           <span>/</span>
-          <span className="font-medium text-slate-700">Forecast</span>
+          <span className="font-medium text-slate-700">Firm Selection</span>
         </nav>
 
         {/* Matter header card */}
@@ -77,15 +77,15 @@ export default async function Page({
         {/* Tabs */}
         <div className="mb-6 border-b border-slate-200">
           <nav className="-mb-px flex gap-6" aria-label="Tabs">
-            <span className="border-b-2 border-blue-600 pb-3 text-sm font-semibold text-blue-600">
-              Forecast
-            </span>
             <Link
-              href={`/matters/${matter.id}/firms`}
+              href={`/matters/${matter.id}/forecast`}
               className="border-b-2 border-transparent pb-3 text-sm font-medium text-slate-500 hover:border-slate-300 hover:text-slate-700"
             >
-              Firm Selection
+              Forecast
             </Link>
+            <span className="border-b-2 border-blue-600 pb-3 text-sm font-semibold text-blue-600">
+              Firm Selection
+            </span>
             <Link
               href={`/matters/${matter.id}`}
               className="border-b-2 border-transparent pb-3 text-sm font-medium text-slate-500 hover:border-slate-300 hover:text-slate-700"
@@ -95,8 +95,8 @@ export default async function Page({
           </nav>
         </div>
 
-        {/* Main content — client */}
-        <ForecastClient matter={matterForClient} />
+        {/* Client content */}
+        <FirmSelectionClient matter={matterForClient} />
       </div>
     </div>
   );

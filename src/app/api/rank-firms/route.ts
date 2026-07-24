@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
-import { scoreFirms, DEFAULT_WEIGHTS, type ScoringWeights } from '@/lib/firm-scoring';
+import { rankFirms, DEFAULT_WEIGHTS, type ScoringWeights } from '@/lib/firm-scoring';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 const DISCLAIMER =
-  'Statistical suggestion based on historical Legal Tracker data. Not a trained ML model.';
+  'Statistical ranking based on historical Legal Tracker data. Not a trained ML model. No outcome/success data available.';
 
 const WeightsSchema = z
   .object({
@@ -48,11 +48,23 @@ export async function POST(request: Request) {
   const weights: ScoringWeights = { ...DEFAULT_WEIGHTS, ...partialWeights };
 
   // ── Load matter ─────────────────────────────────────────────────────────────
-  let matter: { substantiveLaw: string; category: string } | null;
+  let matter: {
+    substantiveLaw: string;
+    category: string;
+    exposureAmount: { toString(): string } | null;
+    liabilityEstimate: string | null;
+    jurisdictionTier: string | null;
+  } | null;
   try {
     matter = await prisma.matter.findUnique({
       where: { id: matterId },
-      select: { substantiveLaw: true, category: true },
+      select: {
+        substantiveLaw: true,
+        category: true,
+        exposureAmount: true,
+        liabilityEstimate: true,
+        jurisdictionTier: true,
+      },
     });
   } catch (error) {
     console.error('[rank-firms] matter lookup failed', error);
@@ -74,29 +86,21 @@ export async function POST(request: Request) {
 
   // ── Business logic ──────────────────────────────────────────────────────────
   try {
-    const result = await scoreFirms({
+    const result = await rankFirms({
       substantiveLaw: matter.substantiveLaw,
       category: matter.category,
       weights,
+      ...(matter.liabilityEstimate ? { liabilityEstimate: matter.liabilityEstimate } : {}),
+      ...(matter.jurisdictionTier ? { jurisdictionTier: matter.jurisdictionTier } : {}),
     });
 
-    const totalFirms = result.scored.length + result.insufficientData.length;
-    const w = weights;
-    const methodology =
-      `${result.scored.length} firm${result.scored.length !== 1 ? 's' : ''} ranked across` +
-      ` "${matter.category}" matters (${matter.substantiveLaw}).` +
-      ` Composite weights — cost: ${pct(w.cost)}, experience: ${pct(w.experience)},` +
-      ` cycle time: ${pct(w.cycle)}, predictability: ${pct(w.predictability)}.` +
-      (result.insufficientData.length > 0
-        ? ` ${result.insufficientData.length} firm${result.insufficientData.length !== 1 ? 's' : ''}` +
-          ` had insufficient data (<3 closed matters).`
-        : '');
+    const totalFirms = result.rankedFirms.length + result.insufficientDataFirms.length;
 
     return Response.json({
       ...result,
       _meta: {
         generatedAt: new Date().toISOString(),
-        methodology,
+        methodology: result.methodology,
         sampleSize: totalFirms,
         disclaimer: DISCLAIMER,
       },
@@ -113,6 +117,3 @@ export async function POST(request: Request) {
   }
 }
 
-function pct(n: number): string {
-  return `${Math.round(n * 100)}%`;
-}

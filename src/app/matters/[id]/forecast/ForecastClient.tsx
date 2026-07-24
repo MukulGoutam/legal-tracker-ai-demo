@@ -484,7 +484,7 @@ export default function ForecastClient({ matter }: { matter: MatterProps }) {
               <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-center">
                 <p className="text-sm text-green-800">Forecast saved.</p>
                 <Link
-                  href={`/matters/${matter.id}/firm-selection`}
+                  href={`/matters/${matter.id}/firms`}
                   className="mt-1 inline-block text-sm font-medium text-blue-600 hover:underline"
                 >
                   Continue to Firm Selection →
