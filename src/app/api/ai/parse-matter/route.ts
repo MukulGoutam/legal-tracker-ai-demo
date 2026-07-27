@@ -36,8 +36,11 @@ export async function POST(req: NextRequest) {
 
   const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
+  // Strip markdown code fences if present
+  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(stripped) as unknown;
     return NextResponse.json(parsed);
   } catch {
     return NextResponse.json({ message: 'Failed to parse AI response', raw }, { status: 422 });
