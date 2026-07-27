@@ -29,6 +29,7 @@ model Matter {
   invoices              Invoice[]
   assignments           FirmAssignment[]
   forecast              Forecast?
+  predictionLogs        PredictionLog[]
 
   @@index([substantiveLaw])
   @@index([category])
@@ -87,4 +88,34 @@ model Forecast {
   createdAt   DateTime @default(now())
 
   matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+}
+
+model PredictionLog {
+  id                String    @id @default(cuid())
+  matterId          String
+  predictionType    String    // "intake" | "forecast"
+  predictedAt       DateTime  @default(now())
+  inputParameters   Json
+  predictedValue    Decimal?
+  predictedP25      Decimal?
+  predictedP75      Decimal?
+  confidence        String
+  fallbackLevel     Int?
+  sampleSize        Int?
+  methodology       String?
+  modelVersion      String    @default("v2_0")
+
+  // Actual outcome (populated at backfill or when matter closes)
+  actualValue       Decimal?
+  actualClosedAt    DateTime?
+  errorAbsolute     Decimal?
+  errorPercent      Decimal?
+  isWithinRange     Boolean?
+
+  matter            Matter    @relation(fields: [matterId], references: [id], onDelete: Cascade)
+
+  @@index([matterId])
+  @@index([predictionType])
+  @@index([predictedAt])
+  @@index([modelVersion])
 }

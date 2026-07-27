@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { PrismaClient } from '@prisma/client';
+import { MODEL_VERSIONS, ModelVersionKey } from '@/lib/model-version';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
@@ -43,10 +44,17 @@ export default async function Page({
     include: {
       forecast: true,
       assignments: { include: { firm: true }, orderBy: { assignedAt: 'asc' } },
+      predictionLogs: {
+        where: { predictionType: 'intake', actualValue: { not: null } },
+        orderBy: { predictedAt: 'asc' },
+        take: 1,
+      },
     },
   });
 
   if (!matter) notFound();
+
+  const intakePrediction = matter.predictionLogs[0] ?? null;
 
   const forecastSummary = matter.forecast
     ? parseForecastTotal(matter.forecast.phases)
@@ -248,6 +256,11 @@ export default async function Page({
             </div>
           )}
 
+          {/* Prediction vs Actual card (closed matters only) */}
+          {matter.status === 'Closed' && intakePrediction && (
+            <PredictionActualCard log={intakePrediction} matterId={matter.id} />
+          )}
+
           {/* Footer */}
           <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
             <p className="text-xs leading-relaxed text-blue-700">
@@ -334,6 +347,112 @@ function ContextRow({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs font-medium text-slate-500">{label}</dt>
       <dd className="mt-0.5 text-sm font-semibold text-slate-800">{value}</dd>
+    </div>
+  );
+}
+
+// ── Prediction vs Actual card ──────────────────────────────────────────────
+
+type PredictionLog = {
+  predictedValue: unknown;
+  predictedP25: unknown;
+  predictedP75: unknown;
+  actualValue: unknown;
+  errorPercent: unknown;
+  isWithinRange: boolean | null;
+  confidence: string;
+  modelVersion: string;
+  sampleSize: number | null;
+};
+
+function PredictionActualCard({ log, matterId }: { log: PredictionLog; matterId: string }) {
+  const predicted = Math.round(Number(log.predictedValue));
+  const actual = Math.round(Number(log.actualValue));
+  const p25 = Math.round(Number(log.predictedP25));
+  const p75 = Math.round(Number(log.predictedP75));
+  const errorPct = Math.round(Number(log.errorPercent) * 10) / 10;
+  const modelKey = log.modelVersion as ModelVersionKey;
+  const modelInfo = MODEL_VERSIONS[modelKey] ?? null;
+
+  // Bar visualization: show predicted range and actual marker on a relative scale
+  const maxVal = Math.max(p75, actual) * 1.1;
+  const pct = (v: number) => `${Math.min(100, Math.round((v / maxVal) * 100))}%`;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-4 flex items-start justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Prediction vs. Actual</h2>
+          <p className="text-xs text-slate-400">How the intake AI estimate compared to final invoices</p>
+        </div>
+        <Link
+          href={`/accuracy?category=`}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          View accuracy dashboard →
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-5">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Predicted (P50)</p>
+          <p className="mt-0.5 text-lg font-bold text-slate-900">{fmtCurrency(predicted)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Actual</p>
+          <p className="mt-0.5 text-lg font-bold text-slate-900">{fmtCurrency(actual)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Error</p>
+          <p className={`mt-0.5 text-lg font-bold ${errorPct <= 20 ? 'text-green-600' : errorPct <= 40 ? 'text-amber-600' : 'text-red-600'}`}>
+            {errorPct}%
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">In Range</p>
+          <p className={`mt-0.5 text-lg font-bold ${log.isWithinRange ? 'text-green-600' : 'text-slate-500'}`}>
+            {log.isWithinRange ? 'Yes' : 'No'}
+          </p>
+        </div>
+      </div>
+
+      {/* Range bar */}
+      <div className="mb-4">
+        <p className="mb-1.5 text-[10px] text-slate-400">Predicted range (P25–P75) vs. actual</p>
+        <div className="relative h-6 rounded-full bg-slate-100">
+          {/* P25-P75 band */}
+          <div
+            className="absolute h-full rounded-full bg-blue-100"
+            style={{ left: pct(p25), width: `${Math.round(((p75 - p25) / maxVal) * 100)}%` }}
+          />
+          {/* Predicted median marker */}
+          <div
+            className="absolute top-0 h-full w-0.5 bg-blue-500"
+            style={{ left: pct(predicted) }}
+            title={`Predicted: ${fmtCurrency(predicted)}`}
+          />
+          {/* Actual marker */}
+          <div
+            className="absolute top-0 h-full w-0.5 bg-green-600"
+            style={{ left: pct(actual) }}
+            title={`Actual: ${fmtCurrency(actual)}`}
+          />
+        </div>
+        <div className="mt-1 flex gap-4 text-[10px] text-slate-400">
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-blue-200" />P25–P75 range</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-0.5 bg-blue-500" />Predicted</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-0.5 bg-green-600" />Actual</span>
+        </div>
+      </div>
+
+      {/* Metadata row */}
+      <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+        <span>Confidence: <strong className="text-slate-700">{log.confidence}</strong></span>
+        {log.sampleSize !== null && <span>Sample: <strong className="text-slate-700">{log.sampleSize} matters</strong></span>}
+        {modelInfo && (
+          <span>Model: <strong className="text-slate-700">{modelInfo.name}</strong> — {modelInfo.description}</span>
+        )}
+      </div>
     </div>
   );
 }

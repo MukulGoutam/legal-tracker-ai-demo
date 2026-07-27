@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { LIABILITY_ESTIMATES, tierJurisdiction } from '@/lib/matter-taxonomy';
+import { suggestForNewMatter } from '@/lib/suggestions';
+import { CURRENT_MODEL_VERSION } from '@/lib/model-version';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
@@ -48,10 +50,8 @@ export async function POST(request: Request) {
     insurerInvolved,
   } = parsed.data;
 
-  // Derive jurisdictionTier server-side from the free-text jurisdiction
   const jurisdictionTier = jurisdiction ? tierJurisdiction(jurisdiction) : null;
 
-  // Parse estimatedResolutionDate ISO string → Date
   let estimatedResolution: Date | null = null;
   if (estimatedResolutionDate) {
     const d = new Date(estimatedResolutionDate);
@@ -77,6 +77,42 @@ export async function POST(request: Request) {
         budgetApprovalRoute: 'Default',
       },
     });
+
+    // Log intake prediction (non-critical — matter creation already succeeded)
+    try {
+      const suggestion = await suggestForNewMatter({
+        substantiveLaw,
+        category,
+        exposureAmount: exposureAmount ?? null,
+        liabilityEstimate: liabilityEstimate ?? null,
+        jurisdiction: jurisdiction ?? null,
+      });
+      await prisma.predictionLog.create({
+        data: {
+          matterId: matter.id,
+          predictionType: 'intake',
+          predictedValue: new Prisma.Decimal(suggestion.estimatedFees.p50),
+          predictedP25: new Prisma.Decimal(suggestion.estimatedFees.p25),
+          predictedP75: new Prisma.Decimal(suggestion.estimatedFees.p75),
+          confidence: suggestion.confidence,
+          fallbackLevel: suggestion.fallbackLevel,
+          sampleSize: suggestion.sampleSize,
+          methodology: suggestion.methodology,
+          modelVersion: CURRENT_MODEL_VERSION,
+          inputParameters: {
+            substantiveLaw,
+            category,
+            exposureAmount: exposureAmount ?? null,
+            liabilityEstimate: liabilityEstimate ?? null,
+            jurisdictionTier,
+            filtersApplied: suggestion.filtersApplied,
+            filtersDropped: suggestion.filtersDropped,
+          },
+        },
+      });
+    } catch (logErr) {
+      console.error('[POST /api/matters] intake prediction logging failed:', logErr);
+    }
 
     return Response.json({ id: matter.id, name: matter.name }, { status: 201 });
   } catch (error) {
