@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { PrismaClient } from '@prisma/client';
 import { MODEL_VERSIONS, ModelVersionKey } from '@/lib/model-version';
+import DeviationExplanation from '@/components/DeviationExplanation';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
@@ -258,7 +259,7 @@ export default async function Page({
 
           {/* Prediction vs Actual card (closed matters only) */}
           {matter.status === 'Closed' && intakePrediction && (
-            <PredictionActualCard log={intakePrediction} matterId={matter.id} />
+            <PredictionActualCard log={intakePrediction} matterId={matter.id} category={matter.category} liabilityEstimate={matter.liabilityEstimate} jurisdictionTier={matter.jurisdictionTier} />
           )}
 
           {/* Footer */}
@@ -365,7 +366,7 @@ type PredictionLog = {
   sampleSize: number | null;
 };
 
-function PredictionActualCard({ log, matterId }: { log: PredictionLog; matterId: string }) {
+function PredictionActualCard({ log, matterId, category, liabilityEstimate, jurisdictionTier }: { log: PredictionLog; matterId: string; category: string; liabilityEstimate?: string | null; jurisdictionTier?: string | null }) {
   const predicted = Math.round(Number(log.predictedValue));
   const actual = Math.round(Number(log.actualValue));
   const p25 = Math.round(Number(log.predictedP25));
@@ -452,6 +453,21 @@ function PredictionActualCard({ log, matterId }: { log: PredictionLog; matterId:
         {modelInfo && (
           <span>Model: <strong className="text-slate-700">{modelInfo.name}</strong> — {modelInfo.description}</span>
         )}
+      </div>
+
+      {/* AI deviation explanation */}
+      <div className="mt-4">
+        <DeviationExplanation
+          predicted={predicted}
+          actual={actual}
+          errorPercent={errorPct}
+          isWithinRange={log.isWithinRange}
+          confidence={log.confidence}
+          sampleSize={log.sampleSize}
+          category={category}
+          liabilityEstimate={liabilityEstimate}
+          jurisdictionTier={jurisdictionTier}
+        />
       </div>
     </div>
   );

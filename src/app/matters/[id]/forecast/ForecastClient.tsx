@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import {
   ChevronDown,
@@ -113,6 +113,40 @@ interface MatterProps {
   openedAt: string;
 }
 
+// ── Streaming helper ───────────────────────────────────────────────────────────
+
+async function streamInto(
+  url: string,
+  body: object,
+  setter: (s: string) => void,
+  setStreaming: (b: boolean) => void,
+) {
+  setStreaming(true);
+  setter('');
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body) {
+      setStreaming(false);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value, { stream: true });
+      setter(accumulated);
+    }
+  } finally {
+    setStreaming(false);
+  }
+}
+
 // ── Utilities ──────────────────────────────────────────────────────────────────
 
 function apiPhasesToEditable(phases: SuggestedPhase[]): EditablePhase[] {
@@ -182,6 +216,10 @@ export default function ForecastClient({ matter }: { matter: MatterProps }) {
   const [suggestedPhases, setSuggestedPhases] = useState<EditablePhase[]>([]);
   const [workingPhases, setWorkingPhases] = useState<EditablePhase[]>([]);
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
+
+  // AI forecast narrative
+  const [forecastNarrative, setForecastNarrative] = useState('');
+  const [forecastNarrativeStreaming, setForecastNarrativeStreaming] = useState(false);
 
   // Edit state
   const [confirmDeletePhase, setConfirmDeletePhase] = useState<{
@@ -264,6 +302,45 @@ export default function ForecastClient({ matter }: { matter: MatterProps }) {
   useEffect(() => {
     void loadForecast();
   }, [loadForecast]);
+
+  // Stream AI commentary when forecast loads
+  const forecastNarrativeKey = loadState.status === 'success' ? loadState.sampleSize : -1;
+  const forecastPhasesContext = useMemo(() => {
+    if (suggestedPhases.length === 0) return null;
+    const total = sumPhases(suggestedPhases).amount;
+    if (total === 0) return null;
+    const top5 = [...suggestedPhases]
+      .sort((a, b) => phaseSubtotals(b).amount - phaseSubtotals(a).amount)
+      .slice(0, 5)
+      .map((p) => {
+        const sub = phaseSubtotals(p);
+        return {
+          name: p.phaseName,
+          p50Amount: Math.round(sub.amount),
+          pctOfTotal: Math.round((sub.amount / total) * 100),
+        };
+      });
+    return { phases: top5, totalP50: Math.round(total) };
+  }, [suggestedPhases]);
+
+  useEffect(() => {
+    if (loadState.status !== 'success' || !forecastPhasesContext) return;
+    void streamInto(
+      '/api/ai/explain',
+      {
+        type: 'forecast',
+        context: {
+          category: matter.category,
+          sampleSize: loadState.sampleSize,
+          overallConfidence: loadState.overallConfidence,
+          ...forecastPhasesContext,
+        },
+      },
+      setForecastNarrative,
+      setForecastNarrativeStreaming,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forecastNarrativeKey, forecastPhasesContext]);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -603,6 +680,19 @@ export default function ForecastClient({ matter }: { matter: MatterProps }) {
             fallbackNote={loadState.fallbackNote}
             sampleSize={loadState.sampleSize}
           />
+        </div>
+      )}
+
+      {/* AI forecast commentary */}
+      {(forecastNarrative || forecastNarrativeStreaming) && (
+        <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-3">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-violet-500">
+            ✨ Strategic Commentary
+          </p>
+          <p className="text-xs leading-relaxed text-violet-900">
+            {forecastNarrative}
+            {forecastNarrativeStreaming && <span className="animate-pulse">▋</span>}
+          </p>
         </div>
       )}
 

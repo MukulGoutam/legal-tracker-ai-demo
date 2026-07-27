@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import SuggestionCard from '@/components/SuggestionCard';
 import DataSufficiencyAlert from '@/components/DataSufficiencyAlert';
@@ -18,6 +18,50 @@ import {
   LIABILITY_ESTIMATES,
   type LiabilityEstimate,
 } from '@/lib/matter-taxonomy';
+
+// ── AI parse types ─────────────────────────────────────────────────────────────
+
+interface ParsedMatter {
+  name?: string;
+  substantiveLaw?: string;
+  category?: string;
+  liabilityEstimate?: string | null;
+  jurisdiction?: string | null;
+  description?: string;
+  extractionNotes?: string;
+}
+
+async function streamInto(
+  url: string,
+  body: object,
+  setter: (s: string) => void,
+  setStreaming: (b: boolean) => void,
+) {
+  setStreaming(true);
+  setter('');
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body) {
+      setStreaming(false);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value, { stream: true });
+      setter(accumulated);
+    }
+  } finally {
+    setStreaming(false);
+  }
+}
 
 // ── Taxonomy ───────────────────────────────────────────────────────────────────
 
@@ -250,6 +294,15 @@ export default function IntakeForm({ demoMode = false }: { demoMode?: boolean })
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // AI parse state
+  const [parseText, setParseText] = useState('');
+  const [parseState, setParseState] = useState<'idle' | 'loading' | 'error' | 'done'>('idle');
+  const [parsedFields, setParsedFields] = useState<ParsedMatter | null>(null);
+
+  // AI narrative state
+  const [narrative, setNarrative] = useState('');
+  const [narrativeStreaming, setNarrativeStreaming] = useState(false);
+
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const availableCategories =
@@ -314,6 +367,77 @@ export default function IntakeForm({ demoMode = false }: { demoMode?: boolean })
       substantiveLaw, category, exposureAmount, liabilityEstimate, jurisdiction, estimatedResolutionDate,
     });
   }
+
+  async function handleParse() {
+    if (!parseText.trim() || parseState === 'loading') return;
+    setParseState('loading');
+    setParsedFields(null);
+    try {
+      const res = await fetch('/api/ai/parse-matter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: parseText }),
+      });
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
+      const data = (await res.json()) as ParsedMatter;
+      setParsedFields(data);
+
+      // Fill form fields
+      if (data.name) setName(data.name);
+      if (data.description) setDescription(data.description);
+      if (data.jurisdiction) setJurisdiction(data.jurisdiction);
+      if (data.liabilityEstimate && data.liabilityEstimate !== 'null')
+        setLiabilityEstimate(data.liabilityEstimate as LiabilityEstimate);
+
+      // Law + category cascade
+      const lawVal = data.substantiveLaw ?? '';
+      const catVal = data.category ?? '';
+      if (lawVal) {
+        handleLawChange(lawVal);
+        if (catVal) setCategory(catVal);
+      }
+
+      setParseState('done');
+
+      // Auto-trigger suggestions if law + category filled
+      if (lawVal && catVal) {
+        await doFetchSuggestions({
+          substantiveLaw: lawVal,
+          category: catVal,
+          exposureAmount,
+          liabilityEstimate: (data.liabilityEstimate ?? liabilityEstimate) as LiabilityEstimate | '',
+          jurisdiction: data.jurisdiction ?? jurisdiction,
+          estimatedResolutionDate,
+        });
+      }
+    } catch {
+      setParseState('error');
+    }
+  }
+
+  // Stream narrative when suggestion succeeds
+  useEffect(() => {
+    if (suggestion.status !== 'success') return;
+    const d = suggestion.data;
+    void streamInto(
+      '/api/ai/explain',
+      {
+        type: 'intake',
+        context: {
+          category: suggestion.fetchedFor.category,
+          sampleSize: d.sampleSize,
+          confidence: d.confidence,
+          filtersApplied: d.filtersApplied,
+          filtersDropped: d.filtersDropped,
+          estimatedFees: d.estimatedFees,
+          driverBreakdown: d.driverBreakdown,
+        },
+      },
+      setNarrative,
+      setNarrativeStreaming,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestion.status === 'success' ? suggestion.data : null]);
 
   async function fillAndSuggest(config: DemoConfig) {
     setSubstantiveLaw(config.substantiveLaw);
@@ -397,6 +521,51 @@ export default function IntakeForm({ demoMode = false }: { demoMode?: boolean })
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Matter Details</h2>
         <p className="mt-0.5 text-xs text-slate-500">Fields marked * are required</p>
+
+        {/* ─── AI Parse Section ────────────────────────────────────────────── */}
+        <div className="mt-5 rounded-lg border border-violet-100 bg-violet-50 p-4">
+          <p className="text-xs font-semibold text-violet-700">✨ Describe your matter (optional)</p>
+          <p className="mt-0.5 text-[10px] text-violet-500">Paste a description, email, or case summary — AI will auto-fill the form fields below.</p>
+          <textarea
+            rows={3}
+            placeholder="e.g. Our client is a software company facing a patent infringement claim from a competitor in the Northern District of California..."
+            value={parseText}
+            onChange={(e) => setParseText(e.target.value)}
+            className="mt-2 block w-full resize-none rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-400/20"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="text-xs">
+              {parseState === 'done' && parsedFields && (
+                <span className="text-green-700">
+                  Filled: {[
+                    parsedFields.name && 'name',
+                    parsedFields.substantiveLaw && 'law',
+                    parsedFields.category && 'category',
+                    parsedFields.jurisdiction && 'jurisdiction',
+                  ].filter(Boolean).join(', ')} ✓
+                </span>
+              )}
+              {parseState === 'error' && (
+                <span className="text-red-600">Failed to parse — try again</span>
+              )}
+              {parsedFields?.extractionNotes && (
+                <span className="text-slate-400"> · {parsedFields.extractionNotes}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleParse()}
+              disabled={!parseText.trim() || parseState === 'loading'}
+              className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {parseState === 'loading' ? (
+                <><Spinner className="text-white/70" /> Parsing…</>
+              ) : (
+                'Auto-fill with AI →'
+              )}
+            </button>
+          </div>
+        </div>
 
         <div className="mt-6 space-y-5">
           {/* Name */}
@@ -704,6 +873,8 @@ export default function IntakeForm({ demoMode = false }: { demoMode?: boolean })
           state={suggestion}
           isStale={isStale}
           onRefetch={handleGetSuggestions}
+          narrative={narrative}
+          narrativeStreaming={narrativeStreaming}
         />
       </div>
     </div>
@@ -717,9 +888,11 @@ interface SuggestionsPanelProps {
   state: SuggestionState;
   isStale: boolean;
   onRefetch: () => void;
+  narrative: string;
+  narrativeStreaming: boolean;
 }
 
-function SuggestionsPanel({ state, isStale, onRefetch }: SuggestionsPanelProps) {
+function SuggestionsPanel({ state, isStale, onRefetch, narrative, narrativeStreaming }: SuggestionsPanelProps) {
   if (state.status === 'idle') {
     return (
       <div className="space-y-4">
@@ -834,6 +1007,19 @@ function SuggestionsPanel({ state, isStale, onRefetch }: SuggestionsPanelProps) 
         sampleSize={data.sampleSize}
         fallbackNote={data.fallbackNote}
       />
+
+      {/* AI narrative */}
+      {(narrative || narrativeStreaming) && (
+        <div className="rounded-lg border border-violet-100 bg-violet-50 p-3">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-violet-500">
+            ✨ AI Insight
+          </p>
+          <p className="text-xs leading-relaxed text-violet-900">
+            {narrative}
+            {narrativeStreaming && <span className="animate-pulse">▋</span>}
+          </p>
+        </div>
+      )}
 
       {/* Footer row */}
       <div className="flex items-center justify-between px-1 text-xs text-slate-500">
